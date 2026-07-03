@@ -1,0 +1,69 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chatwoot_production}
+      POSTGRES_USER: ${POSTGRES_USER:-chatwoot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks:
+      - default
+
+  redis:
+    image: redis:7.0-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - default
+
+  web:
+    image: chatwoot/chatwoot:latest
+    restart: always
+    command: bundle exec rails s -p 3000 -b 0.0.0.0
+    env_file: .env
+    volumes:
+      - storage-data:/app/storage
+    depends_on:
+      - db
+      - redis
+    networks:
+      - default
+      - traefik-network
+    labels:
+      - "traefik.enable=true"
+      # Routers
+      - "traefik.http.routers.chatwoot.rule=Host(`${CHATWOOT_DOMAIN}`)"
+      - "traefik.http.routers.chatwoot.entrypoints=websecure"
+      - "traefik.http.routers.chatwoot.tls=true"
+      - "traefik.http.routers.chatwoot.tls.certresolver=${TLS_CERT_RESOLVER:-myresolver}"
+      # Service load balancer port
+      - "traefik.http.services.chatwoot.loadbalancer.server.port=3000"
+
+  worker:
+    image: chatwoot/chatwoot:latest
+    restart: always
+    command: bundle exec sidekiq -g base,low,default,mailers,scheduled_jobs
+    env_file: .env
+    volumes:
+      - storage-data:/app/storage
+    depends_on:
+      - db
+      - redis
+    networks:
+      - default
+
+volumes:
+  db-data:
+  redis-data:
+  storage-data:
+
+networks:
+  default:
+    name: chatwoot-network
+  traefik-network:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik-network}
